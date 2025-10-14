@@ -73,7 +73,7 @@
                                     <td class="border px-3 py-2">{{ $pkg->title }}</td>
                                     <td class="border px-3 py-2">{{ $pkg->version }}</td>
                                     <td class="border px-3 py-2 text-center">
-                                        <a href="{{ route('scorm.launch', $pkg->id) }}" target="_blank" class="text-blue-600 hover:underline">Launch</a>
+                                        <a target="_blank" href="{{ route('scorm.outline', $pkg->id) }}" target="_blank" class="text-blue-600 hover:underline">View</a>
                                     </td>
                                 </tr>
                             @endforeach

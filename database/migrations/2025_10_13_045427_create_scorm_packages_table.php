@@ -19,8 +19,6 @@ return new class extends Migration {
             $table->string('entry_point')->nullable(); // index.html inside zip
             $table->string('file_path'); // path to extracted folder
             $table->timestamps();
-
-            $table->unique('identifier');
         });
     }
 

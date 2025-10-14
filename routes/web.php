@@ -24,8 +24,16 @@ require __DIR__ . '/auth.php';
 Route::middleware(['auth'])->group(function () {
     Route::get('/scorm', [ScormController::class, 'index'])->name('scorm.index');
     Route::post('/scorm', [ScormController::class, 'store'])->name('scorm.store');
-    Route::get('/scorm/{id}/launch', [ScormController::class, 'launch'])->name('scorm.launch');
-    Route::get('/scorm/{id}/outline', [ScormController::class, 'outline'])->name('scorm.outline');
-    Route::post('/scorm/api/commit', [ScormTrackingController::class, 'commit'])->name('scorm.api.commit');
+    // Route::get('/scorm/sco/{sco}', [ScormController::class, 'launch'])->name('scorm.launch');
+
+
+    Route::get('/scorm/{package}/outline', [ScormController::class, 'outline'])->name('scorm.outline');
+    // Serve internal SCORM files same-origin
+    Route::get('/scorm/content/{package}/{path}', [ScormController::class, 'serveContent'])
+        ->where('path', '.*')
+        ->name('scorm.content');
+
+    Route::post('/scorm/api/progress', [ScormTrackingController::class, 'saveProgress'])->name('scorm.progress.save');
+    Route::get('/scorm/api/progress/{sco}', [ScormTrackingController::class, 'getProgress'])->name('scorm.progress.get');
 });
 

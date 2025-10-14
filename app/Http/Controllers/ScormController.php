@@ -28,7 +28,8 @@ class ScormController extends Controller
         $request->validate([
             'scorm_file' => 'required|mimes:zip|max:51200',
         ]);
-
+        $fullZipPath = null;
+        $extractPath = null;
         try {
             DB::beginTransaction();
             $zipFile = $request->file('scorm_file');
@@ -106,7 +107,6 @@ class ScormController extends Controller
             // Detect SCORM version and get package info
             $version = $this->detectScormVersion($manifestXml);
             $packageInfo = $this->getPackageInfo($manifestXml);
-
             $package = ScormPackage::create([
                 'title' => $packageInfo['title'],
                 'identifier' => $packageInfo['identifier'],
@@ -119,6 +119,9 @@ class ScormController extends Controller
             $this->saveScos($manifestXml, $package, $version);
 
             DB::commit();
+            if ($fullZipPath && file_exists($fullZipPath)) {
+                unlink($fullZipPath);
+            }
             return redirect()->route('scorm.index')->with('success', 'SCORM package uploaded successfully.');
 
         } catch (\Exception $e) {
@@ -128,6 +131,12 @@ class ScormController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             DB::rollBack();
+            if (isset($fullZipPath) && file_exists($fullZipPath)) {
+                unlink($fullZipPath);
+            }
+            if (isset($extractPath) && file_exists($extractPath)) {
+                $this->deleteDirectory($extractPath);
+            }
             return back()->with('error', 'An unexpected error occurred: ' . $e->getMessage());
         }
     }
@@ -143,8 +152,6 @@ class ScormController extends Controller
         $schemaVersion = (string) ($manifest->metadata->schemaversion ?? '');
         $schema = (string) ($manifest->metadata->schema ?? '');
 
-        \Log::info("SCORM Version Detection - Schema: {$schema}, SchemaVersion: {$schemaVersion}");
-
         // SCORM 2004 indicators
         if (
             strpos($schemaVersion, '2004') !== false ||
@@ -152,7 +159,6 @@ class ScormController extends Controller
             strpos($schemaVersion, '4th') !== false ||
             strpos($schema, '2004') !== false
         ) {
-            \Log::info("Detected SCORM 2004");
             return '2004';
         }
 
@@ -162,7 +168,6 @@ class ScormController extends Controller
             strpos($schema, '1.2') !== false ||
             strpos($schema, 'SCORM') !== false
         ) {
-            \Log::info("Detected SCORM 1.2");
             return '1.2';
         }
 
@@ -170,22 +175,16 @@ class ScormController extends Controller
         foreach ($namespaces as $prefix => $uri) {
             if (strpos($uri, 'adlnet') !== false) {
                 if (strpos($uri, '2004') !== false) {
-                    \Log::info("Detected SCORM 2004 via namespace");
                     return '2004';
                 } else {
-                    \Log::info("Detected SCORM 1.2 via namespace");
                     return '1.2';
                 }
             }
         }
-
         // Default based on common patterns
         if (!empty($schemaVersion) || !empty($schema)) {
-            \Log::info("Defaulting to SCORM 1.2 based on metadata presence");
             return '1.2';
         }
-
-        \Log::info("No version detected, defaulting to SCORM 1.2");
         return '1.2';
     }
 
@@ -249,7 +248,6 @@ class ScormController extends Controller
         $organizations = $manifest->organizations->organization ?? [];
 
         $targetOrganization = null;
-
         // Find the default organization
         foreach ($organizations as $org) {
             $orgId = (string) $org['identifier'];
@@ -268,8 +266,6 @@ class ScormController extends Controller
             // Find first launchable SCO in the organization
             $firstSco = $this->findFirstLaunchableSco($targetOrganization, $manifest, $version);
             if ($firstSco) {
-                \Log::info("Found entry point: " . $firstSco);
-
                 // Check if file exists
                 if (file_exists($basePath . '/' . $firstSco)) {
                     return $firstSco;
@@ -284,7 +280,6 @@ class ScormController extends Controller
 
                 foreach ($possiblePaths as $possiblePath) {
                     if (file_exists($possiblePath)) {
-                        \Log::info("Entry point found at: " . $possiblePath);
                         return str_replace($basePath . '/', '', $possiblePath);
                     }
                 }
@@ -303,8 +298,6 @@ class ScormController extends Controller
                 return $entry;
             }
         }
-
-        \Log::warning("No entry point found, using default index.html");
         return 'index.html';
     }
 
@@ -314,7 +307,6 @@ class ScormController extends Controller
     private function findFirstLaunchableSco(SimpleXMLElement $organization, SimpleXMLElement $manifest, $version = '1.2')
     {
         $items = $organization->item ?? [];
-
         foreach ($items as $item) {
             $identifierRef = (string) $item['identifierref'];
 
@@ -326,8 +318,6 @@ class ScormController extends Controller
                     $scormType = (string) $resource['adlcp:scormtype'] ?? '';
                     $href = (string) $resource['href'] ?? '';
 
-                    \Log::info("Checking resource: " . $identifierRef . " -> " . $scormType . " -> " . $href);
-
                     // Check if it's launchable based on version
                     $isLaunchable = false;
                     if ($version === '2004') {
@@ -338,7 +328,6 @@ class ScormController extends Controller
                     }
 
                     if ($isLaunchable) {
-                        \Log::info("Found launchable SCO: " . $href);
                         return $href;
                     }
                 }
@@ -364,14 +353,12 @@ class ScormController extends Controller
         if (!$manifest->resources) {
             return null;
         }
-
         foreach ($manifest->resources->resource as $resource) {
             $resourceId = (string) $resource['identifier'];
             if ($resourceId === $identifier) {
                 return $resource;
             }
         }
-
         return null;
     }
 
@@ -412,7 +399,8 @@ class ScormController extends Controller
         // } else {
         //     $itemsToProcess = $items;
         // }
-$itemsToProcess = $items;
+        $itemsToProcess = $items;
+
         $sortOrder = 0;
 
         foreach ($itemsToProcess as $item) {
@@ -424,7 +412,6 @@ $itemsToProcess = $items;
             $identifierRef = (string) $item['identifierref'];
             $launchUrl = null;
             $isSco = false;
-
             // Find resource and determine if it's a SCO
             if ($identifierRef) {
                 $resource = $this->findResourceByIdentifier($manifest, $identifierRef);
@@ -441,9 +428,12 @@ $itemsToProcess = $items;
                         // SCORM 1.2 - all resources with href are considered SCOs
                         $isSco = ($href && ($scormType === 'sco' || $scormType === ''));
                     }
-
                     if ($isSco) {
                         $launchUrl = $href;
+                        $parameters = (string) $item['parameters'] ?? '';
+                        if ($parameters) {
+                            $launchUrl .= $parameters;
+                        }
                         \Log::info("Item {$title} is SCO with launch URL: {$launchUrl}");
                     }
                 } else {
@@ -463,7 +453,6 @@ $itemsToProcess = $items;
                 'parent_id' => $parentId,
                 'is_launchable' => $isSco,
             ]);
-            // dd($item->item, $itemsToProcess);
             // Process child items recursively
             if (isset($item->item)) {
                 $this->processItemsRecursive($item->item, $package, $sco->id, $manifest, $version, $level + 1);
@@ -472,127 +461,94 @@ $itemsToProcess = $items;
     }
 
     /**
-     * Show SCORM course outline with user progress
+     * Recursively delete directory (only for cleanup on failure)
      */
-    public function outline($id)
+    private function deleteDirectory($path)
     {
-        $package = ScormPackage::with('scos')->findOrFail($id);
-        $userId = auth()->id();
+        if (!file_exists($path)) {
+            return true;
+        }
 
-        // Get user tracking for this package
-        $tracking = ScormTracking::whereIn('scorm_sco_id', $package->scos->pluck('id'))
-            ->where('user_id', $userId)
-            ->get()
-            ->keyBy('scorm_sco_id');
+        if (!is_dir($path)) {
+            return unlink($path);
+        }
 
-        return view('scorm.outline', compact('package', 'tracking'));
+        foreach (scandir($path) as $item) {
+            if ($item == '.' || $item == '..') {
+                continue;
+            }
+
+            if (!$this->deleteDirectory($path . DIRECTORY_SEPARATOR . $item)) {
+                return false;
+            }
+        }
+
+        return rmdir($path);
     }
 
-    // public function launch($id, Request $request)
-    // {
-    //     $package = ScormPackage::with('scos')->findOrFail($id);
+    public function outline(ScormPackage $package)
+    {
+        $scos = $package->scos()->with('children')->whereNull('parent_id')->orderBy('sort_order')->get();
+        return view('scorm.outline', compact('package', 'scos'));
+    }
 
-    //     // Get SCO ID from query, fallback to first SCO
-    //     $scoId = $request->query('sco') ?? $package->scos->first()?->id;
-    //     $sco = $package->scos->find($scoId);
-    //     // Determine launch path
-    //     if ($sco && $sco->launch) {
-    //         $filePath = storage_path('app/public/' . $package->file_path . '/' . $sco->launch);
-    //         if (!file_exists($filePath)) {
-    //             return redirect()->route('scorm.index')->with('error', 'Launch file not found.');
-    //         }
-    //         $launchPath = asset('storage/' . $package->file_path . '/' . $sco->launch);
-    //     } else {
-    //         $defaultFile = storage_path('app/public/' . $package->file_path . '/' . $package->entry_point);
-    //         if (!file_exists($defaultFile)) {
-    //             return redirect()->route('scorm.index')->with('error', 'Entry point file not found.');
-    //         }
-    //         $launchPath = asset('storage/' . $package->file_path . '/' . $package->entry_point);
+    // public function serveContent(ScormPackage $package, $path)
+    // {
+    //     $path = ltrim($path, '/');
+    //     $filePath = storage_path('app/public/' . $package->file_path . '/' . $path);
+
+    //     if (!file_exists($filePath)) {
+    //         abort(404, 'SCORM file not found: ' . $path);
     //     }
 
-    //     // Determine SCORM version JS
-    //     $apiJs = $package->version === '2004' ? 'scorm2004.js' : 'scorm.js';
-    //     return view('scorm.launch', compact('package', 'launchPath', 'apiJs', 'scoId'));
+    //     // Get HTML content
+    //     $html = file_get_contents($filePath);
+
+    //     // Inject <base> tag to fix relative paths
+    //     $baseUrl = asset('storage/' . $package->file_path . '/' . dirname($path));
+
+
+    //     if (str_ends_with($path, '.html')) {
+    //         $baseUrl = asset('storage/' . $package->file_path . '/' . dirname($path));
+    //         $html = preg_replace('/<head>/i', '<head><base href="' . $baseUrl . '/">', $html);
+    //     }
+    //     return response($html)->header('Content-Type', 'text/html');
     // }
 
-    public function launch($id, Request $request)
+    public function serveContent(ScormPackage $package, $path)
     {
-        try {
-            $package = ScormPackage::with([
-                'scos' => function ($query) {
-                    $query->where('is_launchable', true)->orderBy('sort_order');
-                }
-            ])->findOrFail($id);
+        $path = ltrim($path, '/');
+        $fullPath = storage_path('app/public/' . $package->file_path . '/' . $path);
 
-            // Get SCO ID from query, fallback to first launchable SCO
-            $scoId = $request->query('sco');
-            $sco = $scoId ? $package->scos->find($scoId) : $package->scos->first();
-
-            // If no SCO found, use entry point
-            if (!$sco) {
-                return $this->launchWithEntryPoint($package);
-            }
-
-            // Get launch path
-            $launchPath = $this->getValidLaunchPath($package, $sco->launch);
-            if (!$launchPath) {
-                // Fallback to entry point
-                return $this->launchWithEntryPoint($package);
-            }
-
-            // Get navigation
-            $navigation = $this->getNavigation($package, $sco);
-
-            $apiJs = $package->version === '2004' ? 'scorm2004.js' : 'scorm.js';
-
-            return view('scorm.launch', compact('package', 'launchPath', 'apiJs', 'sco', 'navigation'));
-
-        } catch (\Exception $e) {
-            return redirect()->route('scorm.index')->with('error', 'Error launching SCORM: ' . $e->getMessage());
-        }
-    }
-
-    private function launchWithEntryPoint($package)
-    {
-        $launchPath = $this->getValidLaunchPath($package, $package->entry_point);
-        if (!$launchPath) {
-            return redirect()->route('scorm.index')->with('error', 'No launchable content found.');
+        if (!file_exists($fullPath)) {
+            abort(404, 'SCORM file not found: ' . $path);
         }
 
-        $apiJs = $package->version === '2004' ? 'scorm2004.js' : 'scorm.js';
-        return view('scorm.launch', compact('package', 'launchPath', 'apiJs'));
-    }
+        $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
 
-    private function getValidLaunchPath($package, $filePath)
-    {
-        if (!$filePath) {
-            return null;
+        // Serve static files (CSS, JS, images)
+        if (!in_array($ext, ['html', 'htm'])) {
+            return response()->file($fullPath, [
+                'Content-Type' => mime_content_type($fullPath) ?: 'application/octet-stream',
+            ]);
         }
 
-        $cleanPath = ltrim($filePath, '/');
-        $fullPath = storage_path('app/public/' . $package->file_path . '/' . $cleanPath);
+        // Load HTML
+        $html = file_get_contents($fullPath);
 
-        if (file_exists($fullPath)) {
-            return asset('storage/' . $package->file_path . '/' . $cleanPath);
-        }
+        // Ensure <base> is set
+        $baseDir = dirname($path);
+        $baseUrl = asset('storage/' . trim($package->file_path . '/' . $baseDir, '/')) . '/';
+        $html = preg_replace('/<head[^>]*>/i', '<head><base href="' . e($baseUrl) . '">', $html, 1);
 
-        return null;
+        return response($html)->header('Content-Type', 'text/html');
     }
 
-    private function getNavigation($package, $currentSco)
-    {
-        $launchableScos = $package->scos->where('is_launchable', true)->sortBy('sort_order');
-        $scoArray = $launchableScos->values();
-        $currentIndex = $scoArray->search(function ($sco) use ($currentSco) {
-            return $sco->id === $currentSco->id;
-        });
 
-        return [
-            'previous' => $currentIndex > 0 ? $scoArray[$currentIndex - 1] : null,
-            'next' => $currentIndex < ($scoArray->count() - 1) ? $scoArray[$currentIndex + 1] : null,
-            'total' => $scoArray->count(),
-            'current' => $currentIndex + 1,
-        ];
-    }
+
+
+
+
+
 
 }

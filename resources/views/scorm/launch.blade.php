@@ -1,108 +1,207 @@
-{{-- @extends('layouts.app')
+<!DOCTYPE html>
+<html lang="en">
 
-@section('title', $package->title)
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{{ $sco->title }}</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            background: #f9f9f9;
+        }
 
-@section('content')
-    <div class="bg-white shadow-md rounded-lg p-4">
-        <h1 class="text-2xl font-bold mb-4">{{ $package->title }}</h1>
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: white;
+        }
+    </style>
+</head>
 
-        <!-- SCORM iframe -->
-        <iframe src="{{ $launchPath }}" class="w-full h-[80vh] border rounded-md" frameborder="0" allowfullscreen></iframe>
-    </div>
-
-    <!-- Load correct SCORM JS -->
-    <script src="{{ asset('js/' . $apiJs) }}"></script>
-
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            // Initialize SCORM API with current SCO ID
-            const scoId = @json($scoId);
-
-            if ("API" in window) {
-                API.init(scoId);
-            }
-            if ("API_1484_11" in window) {
-                API_1484_11.init(scoId);
-            }
-        });
-    </script>
-@endsection --}}
-
-
-@extends('layouts.app')
-
-@section('title', $package->title)
-
-@section('content')
-    <div class="bg-white shadow-md rounded-lg overflow-hidden">
-        <!-- Header -->
-        <div class="bg-gray-50 px-6 py-4 border-b">
-            <div class="flex justify-between items-center">
-                <div>
-                    <h1 class="text-xl font-bold text-gray-800">{{ $package->title }}</h1>
-                    @if (isset($sco))
-                        <p class="text-sm text-gray-600 mt-1">{{ $sco->title }}</p>
-                        @if (isset($navigation))
-                            <p class="text-xs text-gray-500 mt-1">
-                                Item {{ $navigation['current'] }} of {{ $navigation['total'] }}
-                            </p>
-                        @endif
-                    @endif
-                </div>
-
-                @if (isset($navigation))
-                    <div class="flex space-x-2">
-                        @if ($navigation['previous'])
-                            <a href="{{ route('scorm.launch', ['id' => $package->id, 'sco' => $navigation['previous']->id]) }}" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm">
-                                ← Previous
-                            </a>
-                        @endif
-
-                        @if ($navigation['next'])
-                            <a href="{{ route('scorm.launch', ['id' => $package->id, 'sco' => $navigation['next']->id]) }}" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm">
-                                Next →
-                            </a>
-                        @else
-                            <a href="{{ route('scorm.index') }}" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition text-sm">
-                                Complete
-                            </a>
-                        @endif
-                    </div>
-                @endif
-            </div>
+<body>
+    @if ($sco->launch)
+        <iframe src="{{ route('scorm.content', ['package' => $package->id, 'path' => $sco->launch]) }}" id="scormFrame" allow="fullscreen" allowfullscreen>
+        </iframe>
+    @else
+        <div style="text-align:center; padding: 2rem;">
+            <h2>Content Not Available</h2>
+            <p>This SCO doesn't have launchable content.</p>
         </div>
-
-        <!-- SCORM Content -->
-        <div class="p-1">
-            @if (isset($launchPath) && $launchPath)
-                <iframe src="{{ $launchPath }}" class="w-full h-screen border-0" frameborder="0" allowfullscreen title="SCORM Content"></iframe>
-            @else
-                <div class="text-center py-12">
-                    <div class="text-red-600 text-lg">Unable to load SCORM content</div>
-                    <a href="{{ route('scorm.index') }}" class="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
-                        Return to SCORM Packages
-                    </a>
-                </div>
-            @endif
-        </div>
-    </div>
-
-    <!-- Load SCORM JS -->
-    @if (isset($apiJs))
-        <script src="{{ asset('js/' . $apiJs) }}"></script>
     @endif
 
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            // Simple SCORM initialization
-            setTimeout(function() {
-                if (typeof API !== 'undefined') {
-                    API.init();
-                }
-                if (typeof API_1484_11 !== 'undefined') {
-                    API_1484_11.init();
-                }
-            }, 1000);
+        /**
+         * ======================================================
+         *   SCORM API Wrapper (1.2 + 2004)
+         * ======================================================
+         */
+        const SCO_ID = {{ $sco->id }};
+        const SCORM_VERSION = "{{ $package->version }}";
+        const USER_ID = "{{ auth()->id() }}";
+        const USER_NAME = "{{ auth()->user()->name ?? 'Student' }}";
+        let scormData = {};
+        let isInitialized = false;
+        let sessionStart = new Date();
+
+        // =================== SCORM 1.2 ===================
+        window.API = {
+            LMSInitialize() {
+                console.log("✅ SCORM 1.2 Initialized");
+                isInitialized = true;
+                scormData['cmi.core.student_id'] = USER_ID;
+                scormData['cmi.core.student_name'] = USER_NAME;
+                scormData['cmi.core.lesson_status'] = 'not attempted';
+                scormData['cmi.core.score.raw'] = '0';
+                loadProgress();
+                return "true";
+            },
+            LMSFinish() {
+                console.log("🟡 SCORM 1.2 Finish");
+                saveProgress();
+                isInitialized = false;
+                return "true";
+            },
+            LMSSetValue(key, val) {
+                if (!isInitialized) return "false";
+                scormData[key] = val;
+                console.log('SET:', key, '=', val);
+                if (['cmi.core.lesson_status', 'cmi.core.score.raw'].includes(key)) this.LMSCommit();
+                return "true";
+            },
+            LMSGetValue(key) {
+                if (!isInitialized) return "";
+                return scormData[key] || "";
+            },
+            LMSCommit() {
+                saveProgress();
+                return "true";
+            },
+            LMSGetLastError() {
+                return "0";
+            },
+            LMSGetErrorString() {
+                return "No error";
+            },
+            LMSGetDiagnostic() {
+                return "";
+            }
+        };
+
+        // =================== SCORM 2004 ===================
+        window.API_1484_11 = {
+            Initialize() {
+                console.log("✅ SCORM 2004 Initialized");
+                isInitialized = true;
+                scormData['cmi.learner_id'] = USER_ID;
+                scormData['cmi.learner_name'] = USER_NAME;
+                scormData['cmi.completion_status'] = 'not attempted';
+                scormData['cmi.score.scaled'] = '0';
+                loadProgress();
+                return "true";
+            },
+            Terminate() {
+                console.log("🟡 SCORM 2004 Terminate");
+                saveProgress();
+                isInitialized = false;
+                return "true";
+            },
+            SetValue(key, val) {
+                if (!isInitialized) return "false";
+                scormData[key] = val;
+                console.log('SET:', key, '=', val);
+                if (['cmi.completion_status', 'cmi.success_status', 'cmi.score.scaled'].includes(key)) this.Commit();
+                return "true";
+            },
+            GetValue(key) {
+                if (!isInitialized) return "";
+                return scormData[key] || "";
+            },
+            Commit() {
+                saveProgress();
+                return "true";
+            },
+            GetLastError() {
+                return "0";
+            },
+            GetErrorString() {
+                return "No error";
+            },
+            GetDiagnostic() {
+                return "";
+            }
+        };
+
+        // =================== Common API Discovery ===================
+        function findAPI(win) {
+            if (win.API_1484_11) return win.API_1484_11;
+            if (win.API) return win.API;
+            if (win.parent && win.parent !== win) return findAPI(win.parent);
+            return null;
+        }
+
+        // =================== Progress Handlers ===================
+        async function saveProgress() {
+            const now = new Date();
+            const diff = Math.floor((now - sessionStart) / 1000);
+            const sessionTime = new Date(diff * 1000).toISOString().substr(11, 8);
+
+            const payload = {
+                sco_id: SCO_ID,
+                data: scormData,
+                session_time: sessionTime,
+                last_accessed_at: now.toISOString()
+            };
+
+            await fetch(`/scorm/api/progress`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: JSON.stringify(payload)
+            }).catch(err => console.warn('Save failed:', err));
+        }
+
+        async function loadProgress() {
+            const res = await fetch(`/scorm/api/progress/${SCO_ID}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.data) scormData = {
+                    ...scormData,
+                    ...data.data
+                };
+            }
+        }
+
+        // =================== Iframe Hook ===================
+        document.getElementById('scormFrame').addEventListener('load', function() {
+            const iframeWindow = this.contentWindow;
+            try {
+                if (SCORM_VERSION === '2004') iframeWindow.API_1484_11 = window.API_1484_11;
+                else iframeWindow.API = window.API;
+                iframeWindow.findAPI = findAPI;
+                iframeWindow.GetAPI = findAPI;
+                console.log("🔗 API connected to iframe");
+            } catch {
+                console.warn("⚠️ Could not inject API (cross-origin?)");
+            }
+        });
+
+        // =================== On Window Close ===================
+        window.addEventListener('beforeunload', () => {
+            if (isInitialized) {
+                if (SCORM_VERSION === '2004') window.API_1484_11.Terminate();
+                else window.API.LMSFinish();
+            }
         });
     </script>
-@endsection
+</body>
+
+</html>

@@ -17,6 +17,7 @@ class ScormSco extends Model
         'launch',
         'sort_order',
         'parent_id',
+        'is_launchable'
     ];
 
     public function package()

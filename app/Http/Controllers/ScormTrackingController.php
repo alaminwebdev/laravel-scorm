@@ -11,51 +11,76 @@ use App\Models\ScormSco;
 class ScormTrackingController extends Controller
 {
 
-    public function commit(Request $request)
+    /**
+     * Save SCORM progress data
+     */
+    public function saveProgress(Request $request)
     {
-        $data = $request->all();
-        $user = Auth::user();
+        $request->validate([
+            'sco_id' => 'required|exists:scorm_scos,id',
+            'data' => 'sometimes|array',
+            'session_time' => 'sometimes|string',
+            'score' => 'sometimes|numeric|min:0|max:100',
+            'status' => 'sometimes|in:not_attempted,incomplete,completed,passed,failed',
+            'completion_status' => 'sometimes|string',
+            'success_status' => 'sometimes|string',
+            'suspend_data' => 'sometimes|string'
+        ]);
 
-        DB::transaction(function () use ($data, $user) {
-            foreach ($data as $key => $value) {
-                // Expecting keys like cmi.core.lesson_status_123 or cmi.completion_status_123
-                if (preg_match('/_(\d+)$/', $key, $matches)) {
-                    $scoId = $matches[1];
+        try {
+            $tracking = ScormTracking::updateOrCreate(
+                [
+                    'user_id' => auth()->id(),
+                    'scorm_sco_id' => $request->sco_id
+                ],
+                [
+                    'status' => $request->status ?? 'incomplete',
+                    'score' => $request->score,
+                    'last_accessed_at' => now(),
+                    'success_status' => $request->success_status,
+                    'completion_status' => $request->completion_status,
+                    'suspend_data' => $request->suspend_data,
+                    'session_time' => $request->session_time,
+                    'data' => $request->data // if you have a data column for raw SCORM data
+                ]
+            );
 
-                    // Check SCO exists
-                    $sco = ScormSco::find($scoId);
-                    if (!$sco) {
-                        continue; // Skip invalid SCO ID
-                    }
+            return response()->json([
+                'success' => true,
+                'message' => 'Progress saved successfully'
+            ]);
 
-                    $tracking = ScormTracking::firstOrNew([
-                        'user_id' => $user->id,
-                        'scorm_sco_id' => $scoId
-                    ]);
+        } catch (\Exception $e) {
+            \Log::error('SCORM Progress Save Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to save progress'
+            ], 500);
+        }
+    }
 
-                    // SCORM 1.2
-                    if (strpos($key, 'lesson_status') !== false)
-                        $tracking->status = $value;
-                    if (strpos($key, 'score.raw') !== false)
-                        $tracking->score = $value;
+    /**
+     * Get SCORM progress data
+     */
+    public function getProgress($scoId)
+    {
+        try {
+            $tracking = ScormTracking::where('scorm_sco_id', $scoId)
+                ->where('user_id', auth()->id())
+                ->first();
 
-                    // SCORM 2004
-                    if (strpos($key, 'completion_status') !== false)
-                        $tracking->completion_status = $value;
-                    if (strpos($key, 'success_status') !== false)
-                        $tracking->success_status = $value;
-                    if (strpos($key, 'suspend_data') !== false)
-                        $tracking->suspend_data = $value;
-                    if (strpos($key, 'session_time') !== false)
-                        $tracking->session_time = $value;
+            return response()->json([
+                'success' => true,
+                'data' => $tracking ? $tracking->data : []
+            ]);
 
-                    $tracking->last_accessed_at = now();
-                    $tracking->save();
-                }
-            }
-        });
-
-        return response()->json(['success' => true]);
+        } catch (\Exception $e) {
+            \Log::error('SCORM Progress Load Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'data' => []
+            ]);
+        }
     }
 
 }
