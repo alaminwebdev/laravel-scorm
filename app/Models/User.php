@@ -46,4 +46,14 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+
+    public function scormTrackings()
+    {
+        return $this->hasMany(ScormTracking::class);
+    }
+
+    public function scormInteractions()
+    {
+        return $this->hasManyThrough(ScormInteraction::class, ScormTracking::class);
+    }
 }

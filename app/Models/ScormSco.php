@@ -40,4 +40,14 @@ class ScormSco extends Model
         return $this->belongsTo(ScormSco::class, 'parent_id');
     }
 
+    public function scormTrackings()
+    {
+        return $this->hasMany(ScormTracking::class);
+    }
+
+    public function userTrackings()
+    {
+        return $this->hasMany(ScormTracking::class)->where('user_id', auth()->id());
+    }
+
 }

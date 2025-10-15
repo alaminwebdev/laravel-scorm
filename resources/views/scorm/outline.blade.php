@@ -44,75 +44,335 @@
     {{-- Version-specific API --}}
     @if ($package->version == '1.2')
         <script>
+            // Simple delay function to prevent too many concurrent requests
+            let requestDelay = 0;
+            const delayBetweenRequests = 100; // 100ms delay between requests
+
+            function delayedFetch(url, options) {
+                return new Promise((resolve, reject) => {
+                    setTimeout(() => {
+                        fetch(url, options)
+                            .then(resolve)
+                            .catch(reject);
+                    }, requestDelay);
+
+                    requestDelay += delayBetweenRequests;
+                });
+            }
+
             window.API = {
-                LMSInitialize: (param) => {
-                    return fetch("{{ route('scorm.tracking.initialize', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                        }
-                    }).then(r => r.json()).then(data => "true").catch(() => "false");
-                },
+                LMSInitialize: (param) => delayedFetch("{{ route('scorm.tracking.initialize', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
 
-                LMSFinish: (param) => {
-                    return fetch("{{ route('scorm.tracking.terminate', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                        }
-                    }).then(r => r.json()).then(data => "true").catch(() => "false");
-                },
+                LMSFinish: (param) => delayedFetch("{{ route('scorm.tracking.terminate', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
 
-                LMSGetValue: (element) => {
-                    return fetch("{{ route('scorm.tracking.getvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()) + `?element=${encodeURIComponent(element)}`, {
-                        headers: {
-                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                        }
-                    }).then(r => r.json()).then(data => data.value || "").catch(() => "");
-                },
+                LMSGetValue: (element) => delayedFetch("{{ route('scorm.tracking.getvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()) + `?element=${encodeURIComponent(element)}`, {
+                    headers: {
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(data => data.value || "").catch(() => ""),
 
-                LMSSetValue: (element, value) => {
-                    return fetch("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                LMSSetValue: (element, value) => delayedFetch("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    },
+                    body: JSON.stringify({
+                        element,
+                        value
+                    })
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
+
+                LMSCommit: (param) => delayedFetch("{{ route('scorm.tracking.commit', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
+
+                LMSGetLastError: () => 0,
+                LMSGetErrorString: (errorCode) => "No error",
+                LMSGetDiagnostic: (errorCode) => "",
+
+                // Enhanced RecordQuestion with proper interaction tracking
+                RecordQuestion: (id, text, type, learnerResponse, correctAnswer, wasCorrect, objectiveId) => {
+                    const scoId = getCurrentScoId();
+                    if (!scoId) return;
+
+                    // Store interaction in database with delay
+                    delayedFetch("{{ route('scorm.tracking.interaction', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', scoId), {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRF-TOKEN': '{{ csrf_token() }}'
                         },
                         body: JSON.stringify({
-                            element,
-                            value
+                            interaction_id: id,
+                            type: type || 'choice',
+                            description: text,
+                            learner_response: Array.isArray(learnerResponse) ? learnerResponse.join(',') : learnerResponse,
+                            correct_response: Array.isArray(correctAnswer) ? correctAnswer.join(',') : correctAnswer,
+                            result: wasCorrect ? 'correct' : 'incorrect',
+                            weighting: 1.0,
+                            latency: 0
                         })
-                    }).then(r => r.json()).then(data => "true").catch(() => "false");
+                    });
+
+                    // Update SCORM data model
+                    const interactionIndex = Math.floor(Math.random() * 1000); // Simple index generation
+
+                    // Set interaction data with delays
+                    const setValue = (element, value) => {
+                        delayedFetch("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', scoId), {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({
+                                element,
+                                value
+                            })
+                        });
+                    };
+
+                    // Set basic interaction data
+                    setValue(`cmi.interactions.${interactionIndex}.id`, id);
+                    setValue(`cmi.interactions.${interactionIndex}.type`, type || 'choice');
+                    setValue(`cmi.interactions.${interactionIndex}.student_response`, learnerResponse);
+                    setValue(`cmi.interactions.${interactionIndex}.result`, wasCorrect ? 'correct' : 'wrong');
+                    setValue(`cmi.interactions.${interactionIndex}.time`, new Date().toISOString().substr(11, 8));
+
+                    if (objectiveId) {
+                        setValue(`cmi.interactions.${interactionIndex}.objectives.0.id`, objectiveId);
+                    }
+
+                    console.log(`Question recorded: ${id}, correct: ${wasCorrect}`);
                 },
 
-                LMSCommit: (param) => {
-                    return fetch("{{ route('scorm.tracking.commit', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                // Enhanced RecordTest with comprehensive tracking
+                RecordTest: (score) => {
+                    const scoId = getCurrentScoId();
+                    if (!scoId) return;
+
+                    const lesson_status = score >= 70 ? 'passed' : 'failed';
+                    const completion_status = score >= 70 ? 'completed' : 'incomplete';
+                    const success_status = score >= 70 ? 'passed' : 'failed';
+
+                    // Update score and status
+                    const updates = [{
+                            element: 'cmi.core.score.raw',
+                            value: score
+                        },
+                        {
+                            element: 'cmi.core.lesson_status',
+                            value: lesson_status
+                        },
+                        {
+                            element: 'cmi.completion_status',
+                            value: completion_status
+                        },
+                        {
+                            element: 'cmi.success_status',
+                            value: success_status
+                        },
+                        {
+                            element: 'cmi.score.raw',
+                            value: score
+                        }
+                    ];
+
+                    const updatePromises = updates.map(update =>
+                        delayedFetch("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', scoId), {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify(update)
+                        })
+                    );
+
+                    // Execute all updates
+                    Promise.all(updatePromises).then(() => {
+                        // Commit changes
+                        delayedFetch("{{ route('scorm.tracking.commit', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', scoId), {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            }
+                        });
+
+                        // Update final status
+                        delayedFetch("{{ route('scorm.tracking.terminate-save-status', ['package' => $package->id]) }}", {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({
+                                lesson_status,
+                                completion_status,
+                                success_status,
+                                score_raw: score
+                            })
+                        });
+                    });
+
+                    console.log(`Test Recorded: score=${score}, status=${lesson_status}`);
+                }
+            };
+
+            window.RecordQuestion = window.API.RecordQuestion;
+            window.RecordTest = window.API.RecordTest;
+        </script>
+    @else
+        <script>
+            // Simple delay function for SCORM 2004
+            let requestDelay2004 = 0;
+            const delayBetweenRequests2004 = 100;
+
+            function delayedFetch2004(url, options) {
+                return new Promise((resolve, reject) => {
+                    setTimeout(() => {
+                        fetch(url, options)
+                            .then(resolve)
+                            .catch(reject);
+                    }, requestDelay2004);
+
+                    requestDelay2004 += delayBetweenRequests2004;
+                });
+            }
+
+            window.API_1484_11 = {
+                Initialize: () => delayedFetch2004("{{ route('scorm.tracking.initialize', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
+
+                Terminate: () => delayedFetch2004("{{ route('scorm.tracking.terminate', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
+
+                GetValue: (element) => delayedFetch2004("{{ route('scorm.tracking.getvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()) + `?element=${encodeURIComponent(element)}`, {
+                    headers: {
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(data => data.value || "").catch(() => ""),
+
+                SetValue: (element, value) => delayedFetch2004("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    },
+                    body: JSON.stringify({
+                        element,
+                        value
+                    })
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
+
+                Commit: () => delayedFetch2004("{{ route('scorm.tracking.commit', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    }
+                }).then(r => r.json()).then(() => "true").catch(() => "false"),
+
+                GetLastError: () => 0,
+                GetErrorString: () => "No error",
+                GetDiagnostic: () => "",
+
+                // Enhanced RecordQuestion for SCORM 2004
+                RecordQuestion: (id, text, type, learnerResponse, correctAnswer, wasCorrect, objectiveId) => {
+                    const scoId = getCurrentScoId();
+                    if (!scoId) return;
+
+                    // Store interaction in database with delay
+                    delayedFetch2004("{{ route('scorm.tracking.interaction', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', scoId), {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                        }
-                    }).then(r => r.json()).then(data => "true").catch(() => "false");
+                        },
+                        body: JSON.stringify({
+                            interaction_id: id,
+                            type: type || 'choice',
+                            description: text,
+                            learner_response: Array.isArray(learnerResponse) ? learnerResponse.join(',') : learnerResponse,
+                            correct_response: Array.isArray(correctAnswer) ? correctAnswer.join(',') : correctAnswer,
+                            result: wasCorrect ? 'correct' : 'incorrect',
+                            weighting: 1.0,
+                            latency: 0
+                        })
+                    });
+
+                    console.log('RecordQuestion called for 2004 SCORM version', id, learnerResponse, wasCorrect);
                 },
 
-                LMSGetLastError: () => 0,
-                LMSGetErrorString: (errorCode) => "No error",
-                LMSGetDiagnostic: (errorCode) => ""
-            };
-        </script>
-    @else
-        <script>
-            window.API_1484_11 = {
-                Initialize: () => "true",
-                Terminate: () => "true",
-                GetValue: () => "",
-                SetValue: () => "true",
-                Commit: () => "true",
-                GetLastError: () => 0,
-                GetErrorString: () => "No error",
-                GetDiagnostic: () => ""
+                // Enhanced RecordTest for SCORM 2004
+                RecordTest: (score) => {
+                    const scoId = getCurrentScoId();
+                    if (!scoId) return;
+
+                    const scaledScore = score / 100; // Convert to scaled score (-1 to 1)
+                    const completion_status = 'completed';
+                    const success_status = score >= 70 ? 'passed' : 'failed';
+
+                    // Update SCORM 2004 data model
+                    const updates = [{
+                            element: 'cmi.score.scaled',
+                            value: scaledScore
+                        },
+                        {
+                            element: 'cmi.score.raw',
+                            value: score
+                        },
+                        {
+                            element: 'cmi.success_status',
+                            value: success_status
+                        },
+                        {
+                            element: 'cmi.completion_status',
+                            value: completion_status
+                        }
+                    ];
+
+                    updates.forEach(update => {
+                        delayedFetch2004("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', scoId), {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify(update)
+                        });
+                    });
+
+                    console.log('RecordTest called for 2004 SCORM version', score, 'scaled:', scaledScore);
+                }
             };
         </script>
     @endif
@@ -134,38 +394,15 @@
 
             function buildScormContentUrl(path) {
                 if (!path) return '';
-
-                // Split by '?' to separate path and query
                 const [pathname, query = ''] = path.split('?');
-
-                // Encode only path segments
                 const safePath = pathname.split('/').map(encodeURIComponent).join('/');
-
-                // Recombine with query (unchanged)
-                const finalPath = query ? safePath + '?' + query : safePath;
-
-                return routePattern.replace('--PATH--', finalPath);
+                return routePattern.replace('--PATH--', query ? safePath + '?' + query : safePath);
             }
 
             function loadSco(path, scoId = null) {
-                if (!path) {
-                    console.warn('No launch path provided for SCO');
-                    return;
-                }
+                if (!path) return;
                 frame.src = buildScormContentUrl(path);
-                // Wait for iframe to finish loading DOM
-                frame.onload = () => {
-                    const doc = frame.contentDocument || frame.contentWindow.document;
-
-                    // Ensure DOM is fully parsed
-                    if (doc.readyState === 'complete' || doc.readyState === 'interactive') {
-                        console.log("SCO content loaded and ready for:", scoId);
-                    } else {
-                        doc.addEventListener('DOMContentLoaded', () => {
-                            console.log("SCO DOM fully parsed for:", scoId);
-                        });
-                    }
-                };
+                frame.onload = () => console.log("SCO loaded:", scoId);
             }
 
             const initialPath = "{{ $package->entry_point }}";
@@ -179,7 +416,6 @@
                     document.getElementById('current-sco-title').textContent = item.title;
                     currentIndex = i;
                     updateNavButtons();
-
                     loadSco(item.launch || initialPath, item.id);
                 });
             });
@@ -209,17 +445,15 @@
 
             window.getCurrentScoId = function() {
                 const currentSco = document.querySelector('[data-sco-id].sco-active');
-                if (currentSco && currentSco.dataset.scoId) {
-                    return currentSco.dataset.scoId;
-                }
-
-                // Fallback: if no active SCO but we have SCOs in the list, use the current index
-                if (currentIndex >= 0 && scos[currentIndex]) {
-                    return scos[currentIndex].id;
-                }
-                // Final fallback: use the first launchable SCO
-                return scos[0]?.id || null;
+                return currentSco?.dataset.scoId || scos[0]?.id || null;
             };
+
+            // Auto-initialize the first SCO if none is active
+            if (scos.length > 0 && currentIndex === -1) {
+                setTimeout(() => {
+                    scos[0].el.click();
+                }, 1000);
+            }
         });
     </script>
 @endsection
