@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ScormPackage;
 use App\Models\ScormSco;
 use App\Models\ScormTracking;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use ZipArchive;
@@ -124,12 +125,7 @@ class ScormController extends Controller
             }
             return redirect()->route('scorm.index')->with('success', 'SCORM package uploaded successfully.');
 
-        } catch (\Exception $e) {
-            \Log::error('SCORM Upload Error: ' . $e->getMessage(), [
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
+        } catch (Exception $e) {
             DB::rollBack();
             if (isset($fullZipPath) && file_exists($fullZipPath)) {
                 unlink($fullZipPath);
@@ -144,49 +140,79 @@ class ScormController extends Controller
     /**
      * Detect SCORM version from manifest
      */
-    private function detectScormVersion(SimpleXMLElement $manifest)
+    // private function detectScormVersion(SimpleXMLElement $manifest)
+    // {
+    //     $namespaces = $manifest->getNamespaces(true);
+
+    //     // Check metadata schema version
+    //     $schemaVersion = (string) ($manifest->metadata->schemaversion ?? '');
+    //     $schema = (string) ($manifest->metadata->schema ?? '');
+
+    //     // SCORM 2004 indicators
+    //     if (
+    //         strpos($schemaVersion, '2004') !== false ||
+    //         strpos($schemaVersion, 'CAM 1.3') !== false ||
+    //         strpos($schemaVersion, '4th') !== false ||
+    //         strpos($schema, '2004') !== false
+    //     ) {
+    //         return '2004';
+    //     }
+
+    //     // SCORM 1.2 indicators
+    //     if (
+    //         strpos($schemaVersion, '1.2') !== false ||
+    //         strpos($schema, '1.2') !== false ||
+    //         strpos($schema, 'SCORM') !== false
+    //     ) {
+    //         return '1.2';
+    //     }
+
+    //     // Check for ADLCP namespace (common in SCORM 2004)
+    //     foreach ($namespaces as $prefix => $uri) {
+    //         if (strpos($uri, 'adlnet') !== false) {
+    //             if (strpos($uri, '2004') !== false) {
+    //                 return '2004';
+    //             } else {
+    //                 return '1.2';
+    //             }
+    //         }
+    //     }
+    //     // Default based on common patterns
+    //     if (!empty($schemaVersion) || !empty($schema)) {
+    //         return '1.2';
+    //     }
+    //     return '1.2';
+    // }
+
+    private function detectScormVersion(SimpleXMLElement $manifest): string
     {
-        $namespaces = $manifest->getNamespaces(true);
+        // Get metadata values
+        $schema = strtoupper(trim((string) ($manifest->metadata->schema ?? '')));
+        $version = strtoupper(trim((string) ($manifest->metadata->schemaversion ?? '')));
 
-        // Check metadata schema version
-        $schemaVersion = (string) ($manifest->metadata->schemaversion ?? '');
-        $schema = (string) ($manifest->metadata->schema ?? '');
+        // Allowed schemas (normalize common variations)
+        $allowedSchemas = ['ADL SCORM', 'SCORM'];
 
-        // SCORM 2004 indicators
-        if (
-            strpos($schemaVersion, '2004') !== false ||
-            strpos($schemaVersion, 'CAM 1.3') !== false ||
-            strpos($schemaVersion, '4th') !== false ||
-            strpos($schema, '2004') !== false
-        ) {
-            return '2004';
+        if (!in_array($schema, $allowedSchemas)) {
+            throw new Exception("Unsupported SCORM schema: {$schema}");
         }
 
-        // SCORM 1.2 indicators
-        if (
-            strpos($schemaVersion, '1.2') !== false ||
-            strpos($schema, '1.2') !== false ||
-            strpos($schema, 'SCORM') !== false
-        ) {
-            return '1.2';
-        }
+        // Allowed SCORM versions
+        $allowedVersions = [
+            '1.2' => '1.2',
+            '2004 2ND EDITION' => '2004 2nd Edition',
+            '2004 3RD EDITION' => '2004 3rd Edition',
+            '2004 4TH EDITION' => '2004 4th Edition',
+        ];
 
-        // Check for ADLCP namespace (common in SCORM 2004)
-        foreach ($namespaces as $prefix => $uri) {
-            if (strpos($uri, 'adlnet') !== false) {
-                if (strpos($uri, '2004') !== false) {
-                    return '2004';
-                } else {
-                    return '1.2';
-                }
+        foreach ($allowedVersions as $key => $fullVersion) {
+            if (strpos($version, $key) !== false) {
+                return $fullVersion; // return full version string
             }
         }
-        // Default based on common patterns
-        if (!empty($schemaVersion) || !empty($schema)) {
-            return '1.2';
-        }
-        return '1.2';
+        throw new Exception("Unsupported SCORM version: {$version}");
     }
+
 
     /**
      * Get package information from manifest
@@ -284,21 +310,12 @@ class ScormController extends Controller
                     }
                 }
 
-                \Log::warning("Entry point file not found: " . $firstSco);
+                throw new Exception('Entry point file not found');
             } else {
-                \Log::warning("No launchable SCO found in organization");
+                throw new Exception('No launchable SCO found in organization');
             }
         }
-
-        // Fallback: look for common entry points
-        $commonEntryPoints = ['index.html', 'index.htm', 'launch.html', 'start.html'];
-        foreach ($commonEntryPoints as $entry) {
-            if (file_exists($basePath . '/' . $entry)) {
-                \Log::info("Using fallback entry point: " . $entry);
-                return $entry;
-            }
-        }
-        return 'index.html';
+        throw new Exception('Entry point file not found');
     }
 
     /**
@@ -315,18 +332,8 @@ class ScormController extends Controller
                 // Find the resource
                 $resource = $this->findResourceByIdentifier($manifest, $identifierRef);
                 if ($resource) {
-                    $scormType = (string) $resource['adlcp:scormtype'] ?? '';
                     $href = (string) $resource['href'] ?? '';
-
-                    // Check if it's launchable based on version
-                    $isLaunchable = false;
-                    if ($version === '2004') {
-                        $isLaunchable = ($scormType === 'sco' && $href);
-                    } else {
-                        // SCORM 1.2 - all resources with href are potentially launchable
-                        $isLaunchable = ($href && ($scormType === 'sco' || $scormType === ''));
-                    }
-
+                    $isLaunchable = !empty($href);
                     if ($isLaunchable) {
                         return $href;
                     }
@@ -367,6 +374,7 @@ class ScormController extends Controller
      */
     private function saveScos(SimpleXMLElement $manifest, ScormPackage $package, $version = '1.2')
     {
+
         $defaultOrgId = (string) $manifest->organizations['default'] ?? '';
         $organizations = $manifest->organizations->organization ?? [];
 
@@ -400,7 +408,7 @@ class ScormController extends Controller
         //     $itemsToProcess = $items;
         // }
         $itemsToProcess = $items;
-
+        // dd($items, $package, $manifest, $adlcpNamespace, $version);
         $sortOrder = 0;
 
         foreach ($itemsToProcess as $item) {
@@ -416,32 +424,21 @@ class ScormController extends Controller
             if ($identifierRef) {
                 $resource = $this->findResourceByIdentifier($manifest, $identifierRef);
                 if ($resource) {
-                    $scormType = (string) $resource['adlcp:scormtype'] ?? '';
+
                     $href = (string) $resource['href'] ?? '';
-
-                    \Log::info("Processing item {$title}: scormType={$scormType}, href={$href}");
-
-                    // Determine if this is a SCO based on version
-                    if ($version === '2004') {
-                        $isSco = ($scormType === 'sco' && $href);
-                    } else {
-                        // SCORM 1.2 - all resources with href are considered SCOs
-                        $isSco = ($href && ($scormType === 'sco' || $scormType === ''));
-                    }
+                    // If it has an href, it's launchable (SCO)
+                    $isSco = !empty($href);
                     if ($isSco) {
                         $launchUrl = $href;
                         $parameters = (string) $item['parameters'] ?? '';
                         if ($parameters) {
                             $launchUrl .= $parameters;
                         }
-                        \Log::info("Item {$title} is SCO with launch URL: {$launchUrl}");
                     }
                 } else {
-                    \Log::warning("Resource not found for identifier: " . $identifierRef);
+                    throw new Exception("Resource not found for identifier: " . $identifierRef);
                 }
             }
-
-            \Log::info("Creating SCO: Level {$level}, Title: {$title}, IsSCO: " . ($isSco ? 'YES' : 'NO') . ", LaunchURL: " . ($launchUrl ?? 'NULL'));
 
             // Create SCO record (create both SCOs and containers)
             $sco = ScormSco::create([
@@ -459,6 +456,7 @@ class ScormController extends Controller
             }
         }
     }
+
 
     /**
      * Recursively delete directory (only for cleanup on failure)

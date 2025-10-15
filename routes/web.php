@@ -33,7 +33,13 @@ Route::middleware(['auth'])->group(function () {
         ->where('path', '.*')
         ->name('scorm.content');
 
-    Route::post('/scorm/api/progress', [ScormTrackingController::class, 'saveProgress'])->name('scorm.progress.save');
-    Route::get('/scorm/api/progress/{sco}', [ScormTrackingController::class, 'getProgress'])->name('scorm.progress.get');
+    // SCORM Tracking API Routes
+    Route::prefix('scorm/tracking')->group(function () {
+        Route::post('/{package}/{sco}/initialize', [ScormTrackingController::class, 'initialize'])->name('scorm.tracking.initialize');
+        Route::get('/{package}/{sco}/getvalue', [ScormTrackingController::class, 'getValue'])->name('scorm.tracking.getvalue');
+        Route::post('/{package}/{sco}/setvalue', [ScormTrackingController::class, 'setValue'])->name('scorm.tracking.setvalue');
+        Route::post('/{package}/{sco}/commit', [ScormTrackingController::class, 'commit'])->name('scorm.tracking.commit');
+        Route::post('/{package}/{sco}/terminate', [ScormTrackingController::class, 'terminate'])->name('scorm.tracking.terminate');
+    });
 });
 

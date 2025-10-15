@@ -45,17 +45,64 @@
     @if ($package->version == '1.2')
         <script>
             window.API = {
-                LMSInitialize: () => "true",
-                LMSFinish: () => "true",
-                LMSGetValue: () => "",
-                LMSSetValue: () => "true",
-                LMSCommit: () => "true",
+                LMSInitialize: (param) => {
+                    return fetch("{{ route('scorm.tracking.initialize', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        }
+                    }).then(r => r.json()).then(data => "true").catch(() => "false");
+                },
+
+                LMSFinish: (param) => {
+                    return fetch("{{ route('scorm.tracking.terminate', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        }
+                    }).then(r => r.json()).then(data => "true").catch(() => "false");
+                },
+
+                LMSGetValue: (element) => {
+                    return fetch("{{ route('scorm.tracking.getvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()) + `?element=${encodeURIComponent(element)}`, {
+                        headers: {
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        }
+                    }).then(r => r.json()).then(data => data.value || "").catch(() => "");
+                },
+
+                LMSSetValue: (element, value) => {
+                    return fetch("{{ route('scorm.tracking.setvalue', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        },
+                        body: JSON.stringify({
+                            element,
+                            value
+                        })
+                    }).then(r => r.json()).then(data => "true").catch(() => "false");
+                },
+
+                LMSCommit: (param) => {
+                    return fetch("{{ route('scorm.tracking.commit', ['package' => $package->id, 'sco' => '--SCO_ID--']) }}".replace('--SCO_ID--', getCurrentScoId()), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        }
+                    }).then(r => r.json()).then(data => "true").catch(() => "false");
+                },
+
                 LMSGetLastError: () => 0,
-                LMSGetErrorString: () => "No error",
-                LMSGetDiagnostic: () => ""
+                LMSGetErrorString: (errorCode) => "No error",
+                LMSGetDiagnostic: (errorCode) => ""
             };
         </script>
-    @elseif($package->version == '2004')
+    @else
         <script>
             window.API_1484_11 = {
                 Initialize: () => "true",
@@ -75,11 +122,12 @@
             const frame = document.getElementById('scormPlayerFrame');
             const routePattern = document.getElementById('route-patterns').dataset.contentRoute;
 
-            const scoEls = Array.from(document.querySelectorAll('[data-sco-id]'));
+            const scoEls = Array.from(document.querySelectorAll('[data-sco-id][data-launch]'));
             const scos = scoEls.map(el => ({
                 id: el.dataset.scoId,
                 el,
-                launch: el.dataset.launch
+                launch: el.dataset.launch,
+                title: el.querySelector('.sco-title')?.textContent?.trim() || ''
             }));
 
             let currentIndex = -1;
@@ -99,7 +147,11 @@
                 return routePattern.replace('--PATH--', finalPath);
             }
 
-            function loadSco(path) {
+            function loadSco(path, scoId = null) {
+                if (!path) {
+                    console.warn('No launch path provided for SCO');
+                    return;
+                }
                 frame.src = buildScormContentUrl(path);
                 // Wait for iframe to finish loading DOM
                 frame.onload = () => {
@@ -107,11 +159,10 @@
 
                     // Ensure DOM is fully parsed
                     if (doc.readyState === 'complete' || doc.readyState === 'interactive') {
-                        console.log("SCO content loaded and ready");
-                        // Base CSS, scripts, and SCORM functions inside iframe are now fully available
+                        console.log("SCO content loaded and ready for:", scoId);
                     } else {
                         doc.addEventListener('DOMContentLoaded', () => {
-                            console.log("SCO DOM fully parsed");
+                            console.log("SCO DOM fully parsed for:", scoId);
                         });
                     }
                 };
@@ -123,15 +174,13 @@
             scos.forEach((item, i) => {
                 item.el.addEventListener('click', e => {
                     e.stopPropagation();
-                    scos.forEach(s => s.el.classList.remove('bg-blue-50', 'text-blue-700', 'border-blue-200'));
-                    item.el.classList.add('bg-blue-50', 'text-blue-700', 'border-blue-200');
-                    document.getElementById('current-sco-title').textContent =
-                        item.el.querySelector('.sco-title')?.textContent?.trim() || '{{ $package->title }}';
-
+                    scos.forEach(s => s.el.classList.remove('bg-blue-50', 'text-blue-700', 'border-blue-200', 'sco-active'));
+                    item.el.classList.add('bg-blue-50', 'text-blue-700', 'border-blue-200', 'sco-active');
+                    document.getElementById('current-sco-title').textContent = item.title;
                     currentIndex = i;
                     updateNavButtons();
 
-                    loadSco(item.launch || initialPath);
+                    loadSco(item.launch || initialPath, item.id);
                 });
             });
 
@@ -142,10 +191,10 @@
                 nextBtn.disabled = currentIndex >= scos.length - 1;
                 [prevBtn, nextBtn].forEach(btn => {
                     if (btn.disabled) {
-                        btn.classList.add('cursor-not-allowed', 'bg-gray-200');
+                        btn.classList.add('cursor-not-allowed', 'bg-gray-200', 'text-gray-700');
                         btn.classList.remove('cursor-pointer', 'bg-blue-600', 'text-white');
                     } else {
-                        btn.classList.remove('cursor-not-allowed', 'bg-gray-200');
+                        btn.classList.remove('cursor-not-allowed', 'bg-gray-200', 'text-gray-700');
                         btn.classList.add('cursor-pointer', 'bg-blue-600', 'text-white');
                     }
                 });
@@ -157,6 +206,20 @@
             document.getElementById('next-btn').addEventListener('click', () => {
                 if (currentIndex < scos.length - 1) scos[currentIndex + 1].el.click();
             });
+
+            window.getCurrentScoId = function() {
+                const currentSco = document.querySelector('[data-sco-id].sco-active');
+                if (currentSco && currentSco.dataset.scoId) {
+                    return currentSco.dataset.scoId;
+                }
+
+                // Fallback: if no active SCO but we have SCOs in the list, use the current index
+                if (currentIndex >= 0 && scos[currentIndex]) {
+                    return scos[currentIndex].id;
+                }
+                // Final fallback: use the first launchable SCO
+                return scos[0]?.id || null;
+            };
         });
     </script>
 @endsection
