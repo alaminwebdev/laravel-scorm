@@ -4,57 +4,50 @@ namespace App\Http\Controllers;
 
 use App\Models\ScormTracking;
 use App\Models\ScormInteraction;
-use App\Models\ScormPackage;
 use App\Models\ScormSco;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class ScormTrackingController extends Controller
 {
-    public function initialize($packageId, $scoId)
+    /**
+     * Initialize SCO - One tracking record per user per SCO
+     */
+    public function initialize($packageId, $scoId): JsonResponse
     {
         try {
-            DB::beginTransaction();
-
             $sco = ScormSco::where('id', $scoId)
                 ->where('scorm_package_id', $packageId)
-                ->first();
+                ->firstOrFail();
 
-            if (!$sco) {
-                Log::error("SCO not found", ['package_id' => $packageId, 'sco_id' => $scoId]);
-                return response()->json(['success' => false, 'error' => 'SCO not found'], 404);
-            }
-
+            // One record per user per SCO
             $tracking = ScormTracking::firstOrCreate(
                 [
                     'user_id' => auth()->id(),
                     'scorm_sco_id' => $scoId
                 ],
                 [
-                    'cmi_core_entry' => 'ab-initio',
-                    'entry' => 'ab-initio',
                     'cmi_core_lesson_status' => 'not attempted',
+                    'cmi_core_entry' => 'ab-initio',
+                    'cmi_core_score_min' => 0,
+                    'cmi_core_score_max' => 100,
                     'last_accessed_at' => now()
                 ]
             );
 
-            DB::commit();
-
-            return response()->json(['success' => true, 'data' => $tracking]);
+            return response()->json(['success' => true]);
 
         } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Initialize error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'sco_id' => $scoId,
-                'user_id' => auth()->id()
-            ]);
-            return response()->json(['success' => false, 'error' => 'Initialization failed'], 500);
+            \Log::error('SCORM Initialize Error: ' . $e->getMessage());
+            return response()->json(['success' => false]);
         }
     }
 
-    public function getValue($packageId, $scoId, Request $request)
+    /**
+     * Get SCORM data model value
+     */
+    public function getValue($packageId, $scoId, Request $request): JsonResponse
     {
         try {
             $element = $request->query('element');
@@ -71,30 +64,27 @@ class ScormTrackingController extends Controller
                 return response()->json(['value' => '']);
             }
 
-            $value = $this->mapElementToValue($element, $tracking);
+            $value = $this->getElementValue($element, $tracking);
 
-            return response()->json(['value' => $value ?? '']);
+            return response()->json(['value' => $value]);
 
         } catch (\Exception $e) {
-            Log::error('GetValue error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'sco_id' => $scoId,
-                'element' => $request->query('element')
-            ]);
+            \Log::error('SCORM GetValue Error: ' . $e->getMessage());
             return response()->json(['value' => '']);
         }
     }
 
-    public function setValue($packageId, $scoId, Request $request)
+    /**
+     * Set SCORM data model value - Updates single tracking record
+     */
+    public function setValue($packageId, $scoId, Request $request): JsonResponse
     {
         try {
-            DB::beginTransaction();
-
             $element = $request->input('element');
             $value = $request->input('value');
 
             if (!$element) {
-                return response()->json(['success' => false, 'error' => 'Element is required']);
+                return response()->json(['success' => false, 'error' => 'Element required']);
             }
 
             $tracking = ScormTracking::where('user_id', auth()->id())
@@ -102,53 +92,40 @@ class ScormTrackingController extends Controller
                 ->first();
 
             if (!$tracking) {
-                // Create tracking record if it doesn't exist
-                $tracking = ScormTracking::create([
-                    'user_id' => auth()->id(),
-                    'scorm_sco_id' => $scoId,
-                    'cmi_core_lesson_status' => 'incomplete',
-                    'last_accessed_at' => now()
-                ]);
+                return response()->json(['success' => false, 'error' => 'SCO not initialized']);
             }
 
-            $this->updateTrackingData($element, $value, $tracking);
+            // Skip interaction elements - they go to interactions table
+            if (strpos($element, 'cmi.interactions.') === 0) {
+                return response()->json(['success' => true]);
+            }
 
-            DB::commit();
+            $result = $this->setElementValue($element, $value, $tracking);
 
-            return response()->json(['success' => true]);
+            return $result['success']
+                ? response()->json(['success' => true])
+                : response()->json(['success' => false, 'error' => $result['error']]);
 
         } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('SetValue error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'sco_id' => $scoId,
-                'element' => $request->input('element'),
-                'value' => $request->input('value')
-            ]);
-            return response()->json(['success' => false, 'error' => 'Set value failed'], 500);
+            \Log::error('SCORM SetValue Error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => 'Internal error']);
         }
     }
 
-    public function commit($packageId, $scoId)
+    /**
+     * Commit data - No-op since we save immediately
+     */
+    public function commit($packageId, $scoId): JsonResponse
     {
-        try {
-            // For now, just return success as data is saved immediately in setValue
-            return response()->json(['success' => true]);
-
-        } catch (\Exception $e) {
-            Log::error('Commit error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'sco_id' => $scoId
-            ]);
-            return response()->json(['success' => false], 500);
-        }
+        return response()->json(['success' => true]);
     }
 
-    public function terminate($packageId, $scoId)
+    /**
+     * Terminate SCO
+     */
+    public function terminate($packageId, $scoId): JsonResponse
     {
         try {
-            DB::beginTransaction();
-
             $tracking = ScormTracking::where('user_id', auth()->id())
                 ->where('scorm_sco_id', $scoId)
                 ->first();
@@ -160,120 +137,110 @@ class ScormTrackingController extends Controller
                 ]);
             }
 
-            DB::commit();
-
             return response()->json(['success' => true]);
 
         } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Terminate error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'sco_id' => $scoId
-            ]);
-            return response()->json(['success' => false], 500);
+            \Log::error('SCORM Terminate Error: ' . $e->getMessage());
+            return response()->json(['success' => false]);
         }
     }
 
-    public function terminateSaveStatus($packageId, Request $request)
+    /**
+     * Record Quiz Interaction - Only for actual quiz questions
+     */
+    public function recordInteraction($packageId, $scoId, Request $request): JsonResponse
     {
         try {
-            DB::beginTransaction();
-
-            $lessonStatus = $request->input('lesson_status');
-            $completionStatus = $request->input('completion_status', $this->mapLessonStatusToCompletion($lessonStatus));
-            $successStatus = $request->input('success_status', $this->mapLessonStatusToSuccess($lessonStatus));
-            $scoreRaw = $request->input('score_raw');
-
-            // Update all SCOs for this package with the final status
-            $scos = ScormSco::where('scorm_package_id', $packageId)->pluck('id');
-
-            ScormTracking::where('user_id', auth()->id())
-                ->whereIn('scorm_sco_id', $scos)
-                ->update([
-                    'cmi_core_lesson_status' => $lessonStatus,
-                    'completion_status' => $completionStatus,
-                    'success_status' => $successStatus,
-                    'cmi_core_score_raw' => $scoreRaw,
-                    'last_accessed_at' => now()
-                ]);
-
-            DB::commit();
-
-            return response()->json(['success' => true]);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('TerminateSaveStatus error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'lesson_status' => $request->input('lesson_status')
-            ]);
-            return response()->json(['success' => false], 500);
-        }
-    }
-
-    public function recordInteraction($packageId, $scoId, Request $request)
-    {
-        try {
-            DB::beginTransaction();
-
             $tracking = ScormTracking::where('user_id', auth()->id())
                 ->where('scorm_sco_id', $scoId)
                 ->first();
 
             if (!$tracking) {
-                // Create tracking if it doesn't exist
-                $tracking = ScormTracking::create([
-                    'user_id' => auth()->id(),
-                    'scorm_sco_id' => $scoId,
-                    'cmi_core_lesson_status' => 'incomplete',
-                    'last_accessed_at' => now()
-                ]);
+                return response()->json(['success' => false, 'error' => 'SCO not initialized']);
             }
 
-            ScormInteraction::create([
-                'scorm_tracking_id' => $tracking->id,
-                'interaction_id' => $request->input('interaction_id', uniqid()),
-                'type' => $request->input('type', 'choice'),
-                'description' => $request->input('description', ''),
-                'learner_response' => $request->input('learner_response', ''),
-                'correct_response' => $request->input('correct_response', ''),
-                'result' => $request->input('result', 'neutral'),
-                'weighting' => $request->input('weighting', 1.0),
-                'latency' => $request->input('latency', 0),
-                'timestamp' => now()
-            ]);
+            DB::transaction(function () use ($tracking, $request) {
+                $interactionId = $request->input('interaction_id');
 
-            DB::commit();
+                // Update or create the interaction
+                $interaction = ScormInteraction::updateOrCreate(
+                    [
+                        'scorm_tracking_id' => $tracking->id,
+                        'interaction_id' => $interactionId
+                    ],
+                    [
+                        'type' => $request->input('type', 'choice'),
+                        'description' => $request->input('description', ''),
+                        'learner_response' => $request->input('learner_response', ''),
+                        'correct_response' => $request->input('correct_response', ''),
+                        'result' => $request->input('result', 'neutral'),
+                        'weighting' => $request->input('weighting', 1.0),
+                        'latency' => $request->input('latency', 0),
+                        'timestamp' => now()
+                    ]
+                );
+
+                // Update tracking analytics
+                $this->updateTrackingAnalytics($tracking);
+            });
 
             return response()->json(['success' => true]);
 
         } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('RecordInteraction error: ' . $e->getMessage(), [
-                'package_id' => $packageId,
-                'sco_id' => $scoId,
-                'request_data' => $request->all()
-            ]);
-            return response()->json(['success' => false, 'error' => 'Interaction recording failed'], 500);
+            \Log::error('SCORM Interaction Error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => 'Failed to record interaction']);
         }
     }
 
-    private function mapElementToValue($element, $tracking)
+    /**
+     * Update tracking analytics (interaction counts, scores)
+     */
+    private function updateTrackingAnalytics(ScormTracking $tracking): void
+    {
+        // Get unique interactions count (group by interaction_id to avoid duplicates)
+        $uniqueInteractions = $tracking->interactions()
+            ->select('interaction_id')
+            ->distinct()
+            ->get()
+            ->count();
+
+        $correctCount = $tracking->interactions()
+            ->where('result', 'correct')
+            ->select('interaction_id')
+            ->distinct()
+            ->get()
+            ->count();
+
+        $scorePercentage = $uniqueInteractions > 0
+            ? ($correctCount / $uniqueInteractions) * 100
+            : null;
+
+        $tracking->update([
+            'interactions_count' => $uniqueInteractions,
+            'correct_interactions_count' => $correctCount,
+            'score_percentage' => $scorePercentage,
+            'last_accessed_at' => now()
+        ]);
+    }
+
+    /**
+     * Get element value from tracking
+     */
+    private function getElementValue(string $element, ScormTracking $tracking): string
     {
         $mapping = [
+            // SCORM 1.2 Core elements
             'cmi.core.lesson_status' => $tracking->cmi_core_lesson_status,
             'cmi.core.lesson_location' => $tracking->cmi_core_lesson_location,
             'cmi.core.score.raw' => $tracking->cmi_core_score_raw,
             'cmi.core.score.min' => $tracking->cmi_core_score_min,
             'cmi.core.score.max' => $tracking->cmi_core_score_max,
             'cmi.core.total_time' => $this->formatTime($tracking->cmi_core_total_time),
-            'cmi.core.session_time' => $this->formatTime($tracking->cmi_core_session_time),
             'cmi.core.entry' => $tracking->cmi_core_entry,
             'cmi.core.exit' => $tracking->cmi_core_exit,
             'cmi.suspend_data' => $tracking->suspend_data,
-            'cmi.launch_data' => $tracking->launch_data,
 
-            // SCORM 2004
+            // SCORM 2004 elements - ADD THESE
             'cmi.completion_status' => $tracking->completion_status,
             'cmi.success_status' => $tracking->success_status,
             'cmi.score.scaled' => $tracking->score_scaled,
@@ -282,71 +249,141 @@ class ScormTrackingController extends Controller
             'cmi.score.max' => $tracking->score_max,
             'cmi.total_time' => $this->formatTime($tracking->total_time),
             'cmi.entry' => $tracking->entry,
-            'cmi.progress_measure' => $tracking->progress_measure,
         ];
 
         return $mapping[$element] ?? '';
     }
 
-    private function updateTrackingData($element, $value, $tracking)
+    /**
+     * Set element value with validation
+     */
+    private function setElementValue(string $element, $value, ScormTracking $tracking): array
     {
         $updates = [];
 
-        $mapping = [
-            'cmi.core.lesson_status' => 'cmi_core_lesson_status',
-            'cmi.core.lesson_location' => 'cmi_core_lesson_location',
-            'cmi.core.score.raw' => 'cmi_core_score_raw',
-            'cmi.core.score.min' => 'cmi_core_score_min',
-            'cmi.core.score.max' => 'cmi_core_score_max',
-            'cmi.core.total_time' => ['field' => 'cmi_core_total_time', 'processor' => 'parseTime'],
-            'cmi.core.session_time' => ['field' => 'cmi_core_session_time', 'processor' => 'parseTime'],
-            'cmi.core.entry' => 'cmi_core_entry',
-            'cmi.core.exit' => 'cmi_core_exit',
-            'cmi.suspend_data' => 'suspend_data',
-            'cmi.launch_data' => 'launch_data',
+        // Handle different element types with validation
+        switch ($element) {
+            // SCORM 1.2 elements
+            case 'cmi.core.lesson_status':
+                if (!in_array($value, ['passed', 'completed', 'failed', 'incomplete', 'browsed', 'not attempted'])) {
+                    return ['success' => false, 'error' => 'Invalid lesson status'];
+                }
+                $updates['cmi_core_lesson_status'] = $value;
+                // Auto-map to SCORM 2004
+                $updates['completion_status'] = $this->mapLessonStatusToCompletion($value);
+                $updates['success_status'] = $this->mapLessonStatusToSuccess($value);
+                break;
 
-            // SCORM 2004
-            'cmi.completion_status' => 'completion_status',
-            'cmi.success_status' => 'success_status',
-            'cmi.score.scaled' => 'score_scaled',
-            'cmi.score.raw' => 'score_raw',
-            'cmi.score.min' => 'score_min',
-            'cmi.score.max' => 'score_max',
-            'cmi.total_time' => ['field' => 'total_time', 'processor' => 'parseTime'],
-            'cmi.entry' => 'entry',
-            'cmi.progress_measure' => 'progress_measure',
-        ];
+            case 'cmi.core.score.raw':
+                if (!is_numeric($value) || $value < 0 || $value > 100) {
+                    return ['success' => false, 'error' => 'Invalid score'];
+                }
+                $updates['cmi_core_score_raw'] = $value;
+                break;
 
-        if (isset($mapping[$element])) {
-            $mappingData = $mapping[$element];
+            case 'cmi.core.lesson_location':
+                $updates['cmi_core_lesson_location'] = substr($value, 0, 255);
+                break;
 
-            if (is_array($mappingData)) {
-                $field = $mappingData['field'];
-                $processor = $mappingData['processor'];
-                $updates[$field] = $this->$processor($value);
-            } else {
-                $updates[$mappingData] = $value;
-            }
-        }
+            case 'cmi.core.total_time':
+                $updates['cmi_core_total_time'] = $this->parseTime($value);
+                break;
 
-        // Auto-map statuses between versions
-        if ($element === 'cmi.core.lesson_status') {
-            $updates['completion_status'] = $this->mapLessonStatusToCompletion($value);
-            $updates['success_status'] = $this->mapLessonStatusToSuccess($value);
-        } elseif ($element === 'cmi.completion_status') {
-            $updates['cmi_core_lesson_status'] = $this->mapCompletionToLessonStatus($value);
+            case 'cmi.suspend_data':
+                $updates['suspend_data'] = $value;
+                break;
+
+            // SCORM 2004 elements - ADD THESE
+            case 'cmi.score.scaled':
+                if (!is_numeric($value) || $value < -1 || $value > 1) {
+                    return ['success' => false, 'error' => 'Invalid scaled score'];
+                }
+                $updates['score_scaled'] = $value;
+                break;
+
+            case 'cmi.score.raw':
+                if (!is_numeric($value) || $value < 0) {
+                    return ['success' => false, 'error' => 'Invalid raw score'];
+                }
+                $updates['score_raw'] = $value;
+                break;
+
+            case 'cmi.success_status':
+                if (!in_array($value, ['passed', 'failed', 'unknown'])) {
+                    return ['success' => false, 'error' => 'Invalid success status'];
+                }
+                $updates['success_status'] = $value;
+                break;
+
+            case 'cmi.completion_status':
+                if (!in_array($value, ['completed', 'incomplete', 'not attempted', 'unknown'])) {
+                    return ['success' => false, 'error' => 'Invalid completion status'];
+                }
+                $updates['completion_status'] = $value;
+                break;
+
+            case 'cmi.score.min':
+                if (!is_numeric($value)) {
+                    return ['success' => false, 'error' => 'Invalid min score'];
+                }
+                $updates['score_min'] = $value;
+                break;
+
+            case 'cmi.score.max':
+                if (!is_numeric($value)) {
+                    return ['success' => false, 'error' => 'Invalid max score'];
+                }
+                $updates['score_max'] = $value;
+                break;
+
+            default:
+                // For unknown elements, just log and continue
+                \Log::info('Unknown SCORM element: ' . $element);
+                break;
         }
 
         if (!empty($updates)) {
             $updates['last_accessed_at'] = now();
             $tracking->update($updates);
         }
+
+        return ['success' => true];
     }
 
-    private function parseTime($timeString)
+    /**
+     * Helper methods for status mapping
+     */
+    private function mapLessonStatusToCompletion($status): string
     {
-        // Convert SCORM time format (PT0H0M0S) to seconds
-        if (preg_match('/PT(\d+H)?(\d+M)?(\d+S)?/', $timeString, $matches)) {
+        return match ($status) {
+            'passed', 'completed', 'browsed' => 'completed',
+            'failed', 'incomplete' => 'incomplete',
+            default => 'not attempted'
+        };
+    }
+
+    private function mapLessonStatusToSuccess($status): string
+    {
+        return match ($status) {
+            'passed' => 'passed',
+            'failed' => 'failed',
+            default => 'unknown'
+        };
+    }
+
+    private function formatTime(?int $seconds): string
+    {
+        if (!$seconds)
+            return 'PT0H0M0S';
+        $hours = floor($seconds / 3600);
+        $minutes = floor(($seconds % 3600) / 60);
+        $seconds = $seconds % 60;
+        return sprintf('PT%dH%dM%dS', $hours, $minutes, $seconds);
+    }
+
+    private function parseTime(string $time): int
+    {
+        if (preg_match('/PT(\d+H)?(\d+M)?(\d+S)?/', $time, $matches)) {
             $hours = isset($matches[1]) ? (int) str_replace('H', '', $matches[1]) : 0;
             $minutes = isset($matches[2]) ? (int) str_replace('M', '', $matches[2]) : 0;
             $seconds = isset($matches[3]) ? (int) str_replace('S', '', $matches[3]) : 0;
@@ -355,53 +392,34 @@ class ScormTrackingController extends Controller
         return 0;
     }
 
-    private function formatTime($seconds)
+    public function getProgress($packageId): JsonResponse
     {
-        // Convert seconds to SCORM time format
-        $hours = floor($seconds / 3600);
-        $minutes = floor(($seconds % 3600) / 60);
-        $seconds = $seconds % 60;
+        try {
+            $scos = ScormSco::where('scorm_package_id', $packageId)
+                ->with([
+                    'userTrackings' => function ($query) {
+                        $query->where('user_id', auth()->id());
+                    }
+                ])
+                ->where('is_launchable', true)
+                ->get();
 
-        return sprintf('PT%dH%dM%dS', $hours, $minutes, $seconds);
-    }
+            $progressData = $scos->map(function ($sco) {
+                $tracking = $sco->userTrackings->first();
 
-    private function mapLessonStatusToCompletion($lessonStatus)
-    {
-        $mapping = [
-            'passed' => 'completed',
-            'completed' => 'completed',
-            'failed' => 'incomplete',
-            'incomplete' => 'incomplete',
-            'browsed' => 'completed',
-            'not attempted' => 'not attempted'
-        ];
+                return [
+                    'sco_id' => $sco->id,
+                    'completion_status' => $tracking->completion_status ?? null,
+                    'success_status' => $tracking->success_status ?? null,
+                    'score_percentage' => $tracking->score_percentage ?? null,
+                ];
+            });
 
-        return $mapping[$lessonStatus] ?? 'unknown';
-    }
+            return response()->json($progressData);
 
-    private function mapLessonStatusToSuccess($lessonStatus)
-    {
-        $mapping = [
-            'passed' => 'passed',
-            'completed' => 'passed',
-            'failed' => 'failed',
-            'incomplete' => 'failed',
-            'browsed' => 'unknown',
-            'not attempted' => 'unknown'
-        ];
-
-        return $mapping[$lessonStatus] ?? 'unknown';
-    }
-
-    private function mapCompletionToLessonStatus($completionStatus)
-    {
-        $mapping = [
-            'completed' => 'completed',
-            'incomplete' => 'incomplete',
-            'not attempted' => 'not attempted',
-            'unknown' => 'unknown'
-        ];
-
-        return $mapping[$completionStatus] ?? 'not attempted';
+        } catch (\Exception $e) {
+            \Log::error('Get Progress Error: ' . $e->getMessage());
+            return response()->json([]);
+        }
     }
 }

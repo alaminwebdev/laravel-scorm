@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ScormTracking extends Model
 {
@@ -20,7 +21,6 @@ class ScormTracking extends Model
         'cmi_core_score_min',
         'cmi_core_score_max',
         'cmi_core_total_time',
-        'cmi_core_session_time',
         'cmi_core_entry',
         'cmi_core_exit',
 
@@ -34,15 +34,11 @@ class ScormTracking extends Model
         'total_time',
         'entry',
 
-        // Common fields
+        // Progress & Analytics
+        'interactions_count',
+        'correct_interactions_count',
+        'score_percentage',
         'suspend_data',
-        'launch_data',
-        'comments',
-        'comments_from_lms',
-
-        // Progress tracking
-        'progress_measure',
-        'scaled_passing_score',
 
         'last_accessed_at'
     ];
@@ -52,17 +48,14 @@ class ScormTracking extends Model
         'cmi_core_score_min' => 'decimal:2',
         'cmi_core_score_max' => 'decimal:2',
         'cmi_core_total_time' => 'integer',
-        'cmi_core_session_time' => 'integer',
-
         'score_scaled' => 'decimal:4',
         'score_raw' => 'decimal:2',
         'score_min' => 'decimal:2',
         'score_max' => 'decimal:2',
         'total_time' => 'integer',
-
-        'progress_measure' => 'decimal:4',
-        'scaled_passing_score' => 'decimal:4',
-
+        'score_percentage' => 'decimal:2',
+        'interactions_count' => 'integer',
+        'correct_interactions_count' => 'integer',
         'last_accessed_at' => 'datetime'
     ];
 
@@ -83,51 +76,11 @@ class ScormTracking extends Model
     }
 
     /**
-     * Relationship with ScormInteractions
+     * Relationship with ScormInteractions (Quiz data only)
      */
-    public function interactions()
+    public function interactions(): HasMany
     {
         return $this->hasMany(ScormInteraction::class);
-    }
-
-    /**
-     * Get lesson status options
-     */
-    public static function getLessonStatusOptions()
-    {
-        return [
-            'not attempted' => 'Not Attempted',
-            'incomplete' => 'Incomplete',
-            'completed' => 'Completed',
-            'passed' => 'Passed',
-            'failed' => 'Failed',
-            'browsed' => 'Browsed',
-        ];
-    }
-
-    /**
-     * Get completion status options
-     */
-    public static function getCompletionStatusOptions()
-    {
-        return [
-            'completed' => 'Completed',
-            'incomplete' => 'Incomplete',
-            'not attempted' => 'Not Attempted',
-            'unknown' => 'Unknown',
-        ];
-    }
-
-    /**
-     * Get success status options
-     */
-    public static function getSuccessStatusOptions()
-    {
-        return [
-            'passed' => 'Passed',
-            'failed' => 'Failed',
-            'unknown' => 'Unknown',
-        ];
     }
 
     /**
@@ -135,8 +88,7 @@ class ScormTracking extends Model
      */
     public function scopeCompleted($query)
     {
-        return $query->where('cmi_core_lesson_status', 'completed')
-            ->orWhere('cmi_core_lesson_status', 'passed');
+        return $query->whereIn('cmi_core_lesson_status', ['completed', 'passed']);
     }
 
     /**
@@ -162,65 +114,29 @@ class ScormTracking extends Model
      */
     public function scopeNotAttempted($query)
     {
-        return $query->where('cmi_core_lesson_status', 'not attempted')
-            ->orWhere('completion_status', 'not attempted');
+        return $query->where('cmi_core_lesson_status', 'not attempted');
     }
 
     /**
-     * Get formatted total time (seconds to readable format)
+     * Scope for in-progress trackings
      */
-    public function getFormattedTotalTimeAttribute()
+    public function scopeInProgress($query)
     {
-        return $this->formatTime($this->cmi_core_total_time ?: $this->total_time);
-    }
-
-    /**
-     * Get formatted session time (seconds to readable format)
-     */
-    public function getFormattedSessionTimeAttribute()
-    {
-        return $this->formatTime($this->cmi_core_session_time);
-    }
-
-    /**
-     * Get current score percentage
-     */
-    public function getScorePercentageAttribute()
-    {
-        if ($this->cmi_core_score_raw !== null) {
-            $min = $this->cmi_core_score_min ?: 0;
-            $max = $this->cmi_core_score_max ?: 100;
-
-            if ($max > $min) {
-                return (($this->cmi_core_score_raw - $min) / ($max - $min)) * 100;
-            }
-        } elseif ($this->score_scaled !== null) {
-            return ($this->score_scaled + 1) * 50; // Convert -1 to 1 scale to 0-100%
-        } elseif ($this->score_raw !== null) {
-            $min = $this->score_min ?: 0;
-            $max = $this->score_max ?: 100;
-
-            if ($max > $min) {
-                return (($this->score_raw - $min) / ($max - $min)) * 100;
-            }
-        }
-
-        return null;
+        return $query->where('cmi_core_lesson_status', 'incomplete');
     }
 
     /**
      * Check if tracking is completed
      */
-    public function getIsCompletedAttribute()
+    public function getIsCompletedAttribute(): bool
     {
-        return in_array($this->cmi_core_lesson_status, ['completed', 'passed', 'browsed']) ||
-            in_array($this->completion_status, ['completed']);
+        return in_array($this->cmi_core_lesson_status, ['completed', 'passed', 'browsed']);
     }
 
     /**
      * Check if tracking is passed
      */
-    public function getIsPassedAttribute()
+    public function getIsPassedAttribute(): bool
     {
         return $this->cmi_core_lesson_status === 'passed' ||
             $this->success_status === 'passed' ||
@@ -228,68 +144,147 @@ class ScormTracking extends Model
     }
 
     /**
-     * Get current lesson status with fallback
+     * Get current score as percentage
      */
-    public function getCurrentLessonStatusAttribute()
+    public function getScorePercentageAttribute(): ?float
     {
-        if ($this->cmi_core_lesson_status && $this->cmi_core_lesson_status !== 'not attempted') {
-            return $this->cmi_core_lesson_status;
+        if ($this->attributes['score_percentage'] !== null) {
+            return (float) $this->attributes['score_percentage'];
         }
 
-        if ($this->completion_status && $this->completion_status !== 'not attempted') {
-            return $this->completion_status;
+        // Calculate from raw score if available
+        if ($this->cmi_core_score_raw !== null) {
+            $min = $this->cmi_core_score_min ?: 0;
+            $max = $this->cmi_core_score_max ?: 100;
+
+            if ($max > $min) {
+                return (($this->cmi_core_score_raw - $min) / ($max - $min)) * 100;
+            }
         }
 
-        return 'not attempted';
+        return null;
     }
 
     /**
-     * Get interaction count
+     * Get formatted total time (HH:MM:SS)
      */
-    public function getInteractionsCountAttribute()
+    public function getFormattedTotalTimeAttribute(): string
     {
-        return $this->interactions()->count();
-    }
-
-    /**
-     * Get correct interactions count
-     */
-    public function getCorrectInteractionsCountAttribute()
-    {
-        return $this->interactions()->where('result', 'correct')->count();
+        return $this->formatTime($this->cmi_core_total_time);
     }
 
     /**
      * Get interaction accuracy percentage
      */
-    public function getInteractionAccuracyAttribute()
+    public function getInteractionAccuracyAttribute(): float
     {
-        $total = $this->interactions_count;
-        $correct = $this->correct_interactions_count;
+        if ($this->interactions_count === 0) {
+            return 0.0;
+        }
 
-        return $total > 0 ? ($correct / $total) * 100 : 0;
+        return ($this->correct_interactions_count / $this->interactions_count) * 100;
+    }
+
+    /**
+     * Get time spent in seconds
+     */
+    public function getTimeSpentSecondsAttribute(): int
+    {
+        return $this->cmi_core_total_time ?: 0;
+    }
+
+    /**
+     * Get time spent in readable format
+     */
+    public function getTimeSpentFormattedAttribute(): string
+    {
+        $seconds = $this->time_spent_seconds;
+        $hours = floor($seconds / 3600);
+        $minutes = floor(($seconds % 3600) / 60);
+        $seconds = $seconds % 60;
+
+        if ($hours > 0) {
+            return sprintf('%dh %dm %ds', $hours, $minutes, $seconds);
+        } elseif ($minutes > 0) {
+            return sprintf('%dm %ds', $minutes, $seconds);
+        } else {
+            return sprintf('%ds', $seconds);
+        }
+    }
+
+    /**
+     * Get completion percentage based on lesson status
+     */
+    public function getCompletionPercentageAttribute(): int
+    {
+        if ($this->is_completed) {
+            return 100;
+        }
+
+        // Estimate based on time spent or other factors
+        if ($this->cmi_core_lesson_location) {
+            return 50; // Some progress
+        }
+
+        return $this->cmi_core_lesson_status === 'not attempted' ? 0 : 10;
     }
 
     /**
      * Update last accessed timestamp
      */
-    public function touchLastAccessed()
+    public function touchLastAccessed(): void
     {
         $this->update(['last_accessed_at' => now()]);
     }
 
     /**
-     * Calculate total time spent (in seconds)
+     * Calculate and update analytics
      */
-    public function calculateTotalTimeSpent()
+    public function updateAnalytics(): void
     {
-        return $this->cmi_core_total_time ?: $this->total_time ?: 0;
+        $this->interactions_count = $this->interactions()->count();
+        $this->correct_interactions_count = $this->interactions()->where('result', 'correct')->count();
+
+        if ($this->interactions_count > 0) {
+            $this->score_percentage = ($this->correct_interactions_count / $this->interactions_count) * 100;
+        }
+
+        $this->save();
     }
 
     /**
-     * Format time in seconds to SCORM format (PTHHMMSS)
+     * Get all tracking data as array for API responses
      */
-    private function formatTime($seconds)
+    public function toTrackingArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'sco_id' => $this->scorm_sco_id,
+            'sco_title' => $this->sco->title ?? '',
+            'sco_identifier' => $this->sco->identifier ?? '',
+            'lesson_status' => $this->cmi_core_lesson_status,
+            'completion_status' => $this->completion_status,
+            'success_status' => $this->success_status,
+            'score_raw' => $this->cmi_core_score_raw,
+            'score_percentage' => $this->score_percentage,
+            'time_spent' => $this->formatted_total_time,
+            'time_spent_seconds' => $this->time_spent_seconds,
+            'interactions_count' => $this->interactions_count,
+            'correct_interactions_count' => $this->correct_interactions_count,
+            'interaction_accuracy' => $this->interaction_accuracy,
+            'completion_percentage' => $this->completion_percentage,
+            'is_completed' => $this->is_completed,
+            'is_passed' => $this->is_passed,
+            'last_accessed' => $this->last_accessed_at?->format('Y-m-d H:i:s'),
+            'created_at' => $this->created_at->format('Y-m-d H:i:s'),
+            'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    /**
+     * Format time in seconds to SCORM format
+     */
+    private function formatTime(?int $seconds): string
     {
         if (!$seconds)
             return 'PT0H0M0S';
@@ -302,63 +297,18 @@ class ScormTracking extends Model
     }
 
     /**
-     * Parse SCORM time format to seconds
+     * Get formatted total time for SCORM 2004
      */
-    public static function parseTime($timeString)
+    public function getFormattedTotalTime2004Attribute(): string
     {
-        if (preg_match('/PT(\d+H)?(\d+M)?(\d+S)?/', $timeString, $matches)) {
-            $hours = isset($matches[1]) ? (int) str_replace('H', '', $matches[1]) : 0;
-            $minutes = isset($matches[2]) ? (int) str_replace('M', '', $matches[2]) : 0;
-            $seconds = isset($matches[3]) ? (int) str_replace('S', '', $matches[3]) : 0;
-            return $hours * 3600 + $minutes * 60 + $seconds;
-        }
-        return 0;
+        return $this->formatTime($this->total_time);
     }
 
     /**
-     * Get progress percentage based on progress_measure or completion
+     * Get time spent in seconds for SCORM 2004
      */
-    public function getProgressPercentageAttribute()
+    public function getTimeSpentSeconds2004Attribute(): int
     {
-        if ($this->progress_measure !== null) {
-            return $this->progress_measure * 100;
-        }
-
-        if ($this->is_completed) {
-            return 100;
-        }
-
-        // Estimate progress based on time spent or other factors
-        if ($this->cmi_core_lesson_location) {
-            return 50; // Default estimate if location is set
-        }
-
-        return 0;
-    }
-
-    /**
-     * Get all tracking data as array (for API responses)
-     */
-    public function toTrackingArray()
-    {
-        return [
-            'id' => $this->id,
-            'sco_id' => $this->scorm_sco_id,
-            'sco_title' => $this->sco->title ?? '',
-            'lesson_status' => $this->current_lesson_status,
-            'completion_status' => $this->completion_status,
-            'success_status' => $this->success_status,
-            'score_percentage' => $this->score_percentage,
-            'score_raw' => $this->cmi_core_score_raw ?? $this->score_raw,
-            'total_time' => $this->formatted_total_time,
-            'session_time' => $this->formatted_session_time,
-            'progress_percentage' => $this->progress_percentage,
-            'interactions_count' => $this->interactions_count,
-            'correct_interactions_count' => $this->correct_interactions_count,
-            'interaction_accuracy' => $this->interaction_accuracy,
-            'last_accessed' => $this->last_accessed_at?->format('Y-m-d H:i:s'),
-            'is_completed' => $this->is_completed,
-            'is_passed' => $this->is_passed,
-        ];
+        return $this->total_time ?: 0;
     }
 }

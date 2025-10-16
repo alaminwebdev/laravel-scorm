@@ -140,49 +140,6 @@ class ScormController extends Controller
     /**
      * Detect SCORM version from manifest
      */
-    // private function detectScormVersion(SimpleXMLElement $manifest)
-    // {
-    //     $namespaces = $manifest->getNamespaces(true);
-
-    //     // Check metadata schema version
-    //     $schemaVersion = (string) ($manifest->metadata->schemaversion ?? '');
-    //     $schema = (string) ($manifest->metadata->schema ?? '');
-
-    //     // SCORM 2004 indicators
-    //     if (
-    //         strpos($schemaVersion, '2004') !== false ||
-    //         strpos($schemaVersion, 'CAM 1.3') !== false ||
-    //         strpos($schemaVersion, '4th') !== false ||
-    //         strpos($schema, '2004') !== false
-    //     ) {
-    //         return '2004';
-    //     }
-
-    //     // SCORM 1.2 indicators
-    //     if (
-    //         strpos($schemaVersion, '1.2') !== false ||
-    //         strpos($schema, '1.2') !== false ||
-    //         strpos($schema, 'SCORM') !== false
-    //     ) {
-    //         return '1.2';
-    //     }
-
-    //     // Check for ADLCP namespace (common in SCORM 2004)
-    //     foreach ($namespaces as $prefix => $uri) {
-    //         if (strpos($uri, 'adlnet') !== false) {
-    //             if (strpos($uri, '2004') !== false) {
-    //                 return '2004';
-    //             } else {
-    //                 return '1.2';
-    //             }
-    //         }
-    //     }
-    //     // Default based on common patterns
-    //     if (!empty($schemaVersion) || !empty($schema)) {
-    //         return '1.2';
-    //     }
-    //     return '1.2';
-    // }
 
     private function detectScormVersion(SimpleXMLElement $manifest): string
     {
@@ -457,7 +414,6 @@ class ScormController extends Controller
         }
     }
 
-
     /**
      * Recursively delete directory (only for cleanup on failure)
      */
@@ -490,28 +446,6 @@ class ScormController extends Controller
         return view('scorm.outline', compact('package', 'scos'));
     }
 
-    // public function serveContent(ScormPackage $package, $path)
-    // {
-    //     $path = ltrim($path, '/');
-    //     $filePath = storage_path('app/public/' . $package->file_path . '/' . $path);
-
-    //     if (!file_exists($filePath)) {
-    //         abort(404, 'SCORM file not found: ' . $path);
-    //     }
-
-    //     // Get HTML content
-    //     $html = file_get_contents($filePath);
-
-    //     // Inject <base> tag to fix relative paths
-    //     $baseUrl = asset('storage/' . $package->file_path . '/' . dirname($path));
-
-
-    //     if (str_ends_with($path, '.html')) {
-    //         $baseUrl = asset('storage/' . $package->file_path . '/' . dirname($path));
-    //         $html = preg_replace('/<head>/i', '<head><base href="' . $baseUrl . '/">', $html);
-    //     }
-    //     return response($html)->header('Content-Type', 'text/html');
-    // }
 
     public function serveContent(ScormPackage $package, $path)
     {

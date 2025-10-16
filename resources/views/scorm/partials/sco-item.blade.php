@@ -6,7 +6,7 @@
 @endphp
 
 <li>
-    <div class="sco-item flex items-center p-3 rounded-lg border border-transparent transition-colors {{ $isLaunchable ? 'cursor-pointer hover:bg-gray-50' : 'cursor-default' }} text-gray-700"
+    <div class="text-sm sco-item flex items-center p-3 rounded-lg border border-transparent transition-colors {{ $isLaunchable ? 'cursor-pointer hover:bg-gray-50' : 'cursor-default' }} text-gray-700"
         @if ($isLaunchable) data-sco-id="{{ $sco->id }}" data-launch="{{ $launchPath }}" @endif style="padding-left: {{ $padding + 12 }}px;">
 
         @if ($hasChildren)
@@ -21,12 +21,15 @@
             </span>
         @endif
 
-        <span class="sco-title flex-1 truncate">
+        <span class="sco-title flex-1 truncate text-sm">
             {{ $sco->title }}
             @if (!$isLaunchable && !$hasChildren)
                 <span class="text-xs text-gray-400 ml-2">(Asset)</span>
             @endif
         </span>
+        <div class="badge-container ml-2 text-sm" data-sco-id="{{ $sco->id }}">
+            <!-- Badge will be inserted here by JavaScript -->
+        </div>
     </div>
 
     @if ($hasChildren)

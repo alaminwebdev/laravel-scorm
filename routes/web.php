@@ -40,8 +40,8 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/{package}/{sco}/setvalue', [ScormTrackingController::class, 'setValue'])->name('scorm.tracking.setvalue');
         Route::post('/{package}/{sco}/commit', [ScormTrackingController::class, 'commit'])->name('scorm.tracking.commit');
         Route::post('/{package}/{sco}/terminate', [ScormTrackingController::class, 'terminate'])->name('scorm.tracking.terminate');
-        Route::post('/{package}/terminate-save-status', [ScormTrackingController::class, 'terminateSaveStatus'])->name('scorm.tracking.terminate-save-status');
         Route::post('/{package}/{sco}/interaction', [ScormTrackingController::class, 'recordInteraction'])->name('scorm.tracking.interaction');
+        Route::get('/{package}/progress', [ScormTrackingController::class, 'getProgress'])->name('scorm.tracking.get-progress');
     });
 });
 
