@@ -377,8 +377,8 @@
                     e.stopPropagation();
 
                     // Update UI
-                    scos.forEach(s => s.el.classList.remove('sco-active', 'bg-blue-50', 'text-blue-700'));
-                    item.el.classList.add('sco-active', 'bg-blue-50', 'text-blue-700');
+                    scos.forEach(s => s.el.classList.remove('sco-active', 'bg-blue-100', 'text-blue-700'));
+                    item.el.classList.add('sco-active', 'bg-blue-100', 'text-blue-700');
                     document.getElementById('current-sco-title').textContent = item.title;
                     currentIndex = i;
                     updateNavButtons();
@@ -441,7 +441,7 @@
                         await window.API_1484_11.SetValue('cmi.completion_status', successStatus);
                         await window.API_1484_11.Commit();
                     }
-                    updateSCOBadge(scoId, successStatus);
+                    updateSCOBadge(scoId, null, null, successStatus);
                     console.log('Marked SCO as completed:', scoId);
                 } catch (error) {
                     console.warn('Failed to mark SCO as completed:', error);
@@ -496,10 +496,10 @@
 
             // Handle completion status (for borders)
             if (completionStatus === 'completed' || completionStatus === 'completed' || completionStatus === 'unknown') {
-                borderColor = 'border-l-4 border-l-green-500';
+                // borderColor = 'border-l-4 border-l-green-500';
                 icon = '✅';
             } else {
-                borderColor = 'border-l-4 border-l-yellow-500';
+                // borderColor = 'border-l-4 border-l-yellow-500';
                 icon = '⏳';
             }
 
@@ -553,7 +553,7 @@
             if (borderColor) {
                 scoElement.classList.add(...borderColor.split(' '));
             }
-
+            console.log(completionStatus, successStatus, badgeText, borderColor);
             // Create badge (only for success status like passed/failed)
             if (badgeText) {
                 const badge = document.createElement('span');

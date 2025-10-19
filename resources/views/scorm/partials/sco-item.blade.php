@@ -6,7 +6,7 @@
 @endphp
 
 <li>
-    <div class="text-sm sco-item flex items-center p-3 rounded-lg border border-transparent transition-colors {{ $isLaunchable ? 'cursor-pointer hover:bg-gray-50' : 'cursor-default' }} text-gray-700"
+    <div class="text-sm sco-item flex items-center p-3 rounded-lg border border-transparent transition-colors {{ $isLaunchable ? 'cursor-pointer hover:bg-gray-200' : 'cursor-default' }} text-gray-700"
         @if ($isLaunchable) data-sco-id="{{ $sco->id }}" data-launch="{{ $launchPath }}" @endif style="padding-left: {{ $padding + 12 }}px;">
 
         @if ($hasChildren)
